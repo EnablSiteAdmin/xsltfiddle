@@ -82,6 +82,12 @@ module.exports = async function handler(req, res) {
   if (typeof body === 'string') {
     try { body = JSON.parse(body); } catch { body = null; }
   }
+
+  // Alleen het wachtwoord controleren: geen proces starten, dus snel.
+  if (body && body.verify === true) {
+    return res.status(200).json({ ok: true, verified: true });
+  }
+
   const source = body && body.source;
   const xslt = body && body.xslt;
 

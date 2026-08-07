@@ -59,6 +59,7 @@
   <label><input type="radio" name="mode" value="xml"> XML</label>
   <label><input type="checkbox" id="auto"> auto</label>
   <button class="primary" id="run">Transform</button>
+  <button id="save">Bewaar stylesheet</button>
   <button id="copy">Kopieer output</button>
   <span class="spacer"></span>
   <button class="link" id="logout">Vergrendelen</button>
@@ -118,10 +119,18 @@ async function verify(candidate) {
     });
     if (r.ok) return { ok: true };
     const d = await r.json().catch(() => ({}));
-    return { ok: false, status: r.status, error: d.error || 'Onbekende fout.' };
+    return { ok: false, status: r.status, error: d.error || ('HTTP ' + r.status) };
   } catch (e) {
     return { ok: false, status: 0, error: 'Geen verbinding met de server.' };
   }
+}
+
+function authMessage(v) {
+  if (v.status === 401) return 'Wachtwoord klopt niet.';
+  if (v.status === 503) return v.error;
+  if (v.status === 400) return 'De API is een oudere versie. Deploy api/transform.js opnieuw.';
+  if (v.status === 404) return 'Geen /api/transform gevonden. Staat het bestand in de map api/?';
+  return v.error;
 }
 
 function mode() { return document.querySelector('input[name=mode]:checked').value; }
@@ -213,7 +222,7 @@ async function attemptUnlock(candidate, remember) {
   localStorage.removeItem(PW_KEY);
   sessionStorage.removeItem(PW_KEY);
   gatemsg.style.color = '#a32d2d';
-  gatemsg.textContent = v.status === 401 ? 'Wachtwoord klopt niet.' : v.error;
+  gatemsg.textContent = authMessage(v);
   pw.value = '';
   pw.focus();
   return false;
@@ -235,6 +244,53 @@ document.getElementById('logout').onclick = () => {
   openGate('Vergrendeld.');
 };
 
+// Bewaart de stylesheet. In Chrome/Edge opent een echte opslaandialoog waarin je
+// map en bestandsnaam kiest. Firefox/Safari kennen die API niet en vallen terug
+// op een gewone download naar de downloadmap.
+const NAME_KEY = 'fiddle.filename';
+
+async function saveStylesheet() {
+  const text = xsl.value;
+  if (!text.trim()) {
+    status.textContent = 'stylesheet is leeg';
+    return;
+  }
+  const suggested = localStorage.getItem(NAME_KEY) || 'map.xslt';
+  const blob = new Blob([text], { type: 'application/xslt+xml' });
+
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: suggested,
+        types: [{
+          description: 'XSLT stylesheet',
+          accept: { 'application/xslt+xml': ['.xslt', '.xsl'] }
+        }]
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      localStorage.setItem(NAME_KEY, handle.name);
+      status.textContent = 'bewaard: ' + handle.name;
+      return;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;   // gebruiker klikte de dialoog weg
+      // andere fout: val terug op de klassieke download hieronder
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = suggested;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  status.textContent = 'gedownload: ' + suggested;
+}
+
+document.getElementById('save').onclick = saveStylesheet;
 document.getElementById('run').onclick = () => run(false);
 document.getElementById('copy').onclick = () => navigator.clipboard.writeText(res.textContent);
 
@@ -249,6 +305,7 @@ xsl.addEventListener('input', maybeAuto);
 
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(false); }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); saveStylesheet(); }
 });
 
 // De gate staat standaard open (zie CSS). Is er een bewaard wachtwoord, dan
@@ -270,7 +327,7 @@ document.addEventListener('keydown', e => {
   } else {
     localStorage.removeItem(PW_KEY);
     sessionStorage.removeItem(PW_KEY);
-    openGate(v.status === 401 ? 'Wachtwoord klopt niet meer.' : v.error);
+    openGate(v.status === 401 ? 'Wachtwoord klopt niet meer.' : authMessage(v));
   }
 })();
 </script>

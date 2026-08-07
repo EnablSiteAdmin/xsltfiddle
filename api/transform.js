@@ -10,6 +10,29 @@ const XSLT3_JS = require.resolve('xslt3/xslt3.js');
 const MAX_INPUT = 2 * 1024 * 1024;   // 2 MB per veld
 const TIMEOUT_MS = 20000;
 
+function checkPassword(req) {
+  const expected = process.env.FIDDLE_PASSWORD;
+
+  // Faalt dicht: zonder ingesteld wachtwoord doet de functie niets.
+  if (!expected) {
+    return { status: 503, error: 'FIDDLE_PASSWORD is niet ingesteld in de Vercel-omgevingsvariabelen.' };
+  }
+
+  const given = String(req.headers['x-fiddle-password'] || '');
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+
+  // Hash beide kanten zodat timingSafeEqual altijd gelijke lengtes krijgt en
+  // de lengte van het wachtwoord niet uit de responstijd valt af te leiden.
+  const ha = crypto.createHash('sha256').update(a).digest();
+  const hb = crypto.createHash('sha256').update(b).digest();
+
+  if (!crypto.timingSafeEqual(ha, hb)) {
+    return { status: 401, error: 'Onjuist wachtwoord.' };
+  }
+  return null;
+}
+
 function runTransform(sourceText, xsltText) {
   return new Promise(resolve => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xf-'));
@@ -38,11 +61,7 @@ function runTransform(sourceText, xsltText) {
           return resolve({ ok: false, error: 'Transformatie afgebroken na ' + (TIMEOUT_MS / 1000) + ' seconden.' });
         }
         if (err) {
-          return resolve({
-            ok: false,
-            error: scrub(stderr || err.message),
-            partial: stdout || ''
-          });
+          return resolve({ ok: false, error: scrub(stderr || err.message), partial: stdout || '' });
         }
         resolve({ ok: true, output: stdout, warnings: stderr ? scrub(stderr) : '' });
       }
@@ -56,17 +75,8 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Gebruik POST.' });
   }
 
-  // Gedeeld geheim. Zonder dit draait iedereen die de URL kent willekeurige
-  // XSLT op jouw functie - inclusief doc() en unparsed-text() naar interne adressen.
-  const secret = process.env.FIDDLE_TOKEN;
-  if (secret) {
-    const given = req.headers['x-fiddle-token'] || '';
-    const a = Buffer.from(String(given));
-    const b = Buffer.from(secret);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      return res.status(401).json({ ok: false, error: 'Ongeldig of ontbrekend token.' });
-    }
-  }
+  const bad = checkPassword(req);
+  if (bad) return res.status(bad.status).json({ ok: false, error: bad.error, auth: true });
 
   let body = req.body;
   if (typeof body === 'string') {

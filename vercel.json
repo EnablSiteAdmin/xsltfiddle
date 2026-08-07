@@ -1,4 +1,11 @@
 {
   "version": 2,
-  "cleanUrls": true
+  "cleanUrls": true,
+  "functions": {
+    "api/transform.js": {
+      "memory": 1024,
+      "maxDuration": 30,
+      "includeFiles": "node_modules/xslt3/**"
+    }
+  }
 }

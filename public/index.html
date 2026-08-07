@@ -28,8 +28,8 @@
   pre.err { color:#a32d2d; background:#fff5f5; }
   .ok { color:#0f6e56; font-weight:600; }
 
-  #gate { position:fixed; inset:0; background:var(--bg); display:none; align-items:center; justify-content:center; z-index:10; }
-  #gate.show { display:flex; }
+  #gate { position:fixed; inset:0; background:var(--bg); display:flex; align-items:center; justify-content:center; z-index:10; }
+  #gate.hidden { display:none; }
   #gate .card { background:#fff; border:1px solid var(--bd); border-radius:10px; padding:24px; width:320px; }
   #gate h3 { margin:0 0 4px; font-size:15px; font-weight:600; }
   #gate p { margin:0 0 16px; font-size:13px; color:var(--mut); }
@@ -98,13 +98,30 @@ function password() { return sessionStorage.getItem(PW_KEY) || localStorage.getI
 
 function openGate(msg) {
   gatemsg.textContent = msg || '';
-  gate.classList.add('show');
+  gatemsg.style.color = '#a32d2d';
+  gate.classList.remove('hidden');
   setTimeout(() => pw.focus(), 50);
 }
 function closeGate() {
-  gate.classList.remove('show');
+  gate.classList.add('hidden');
   pw.value = '';
   gatemsg.textContent = '';
+}
+
+// Controleert het wachtwoord bij de server zonder een transformatie te draaien.
+async function verify(candidate) {
+  try {
+    const r = await fetch('/api/transform', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Fiddle-Password': candidate },
+      body: JSON.stringify({ verify: true })
+    });
+    if (r.ok) return { ok: true };
+    const d = await r.json().catch(() => ({}));
+    return { ok: false, status: r.status, error: d.error || 'Onbekende fout.' };
+  } catch (e) {
+    return { ok: false, status: 0, error: 'Geen verbinding met de server.' };
+  }
 }
 
 function mode() { return document.querySelector('input[name=mode]:checked').value; }
@@ -172,19 +189,44 @@ async function run(silent) {
   busy = false;
 }
 
-document.getElementById('unlock').onclick = () => {
-  const v = pw.value;
-  if (!v) { gatemsg.textContent = 'Vul een wachtwoord in.'; return; }
-  sessionStorage.setItem(PW_KEY, v);
-  if (document.getElementById('remember') && document.getElementById('remember').checked) {
-    localStorage.setItem(PW_KEY, v);
+const unlockBtn = document.getElementById('unlock');
+
+async function attemptUnlock(candidate, remember) {
+  unlockBtn.disabled = true;
+  unlockBtn.textContent = 'Controleren...';
+  gatemsg.style.color = 'var(--mut)';
+  gatemsg.textContent = '';
+
+  const v = await verify(candidate);
+
+  unlockBtn.disabled = false;
+  unlockBtn.textContent = 'Ontgrendelen';
+
+  if (v.ok) {
+    sessionStorage.setItem(PW_KEY, candidate);
+    if (remember) localStorage.setItem(PW_KEY, candidate);
+    closeGate();
+    if (src.value.trim() && xsl.value.trim()) run(true);
+    return true;
   }
-  closeGate();
-  run(true);
+
+  localStorage.removeItem(PW_KEY);
+  sessionStorage.removeItem(PW_KEY);
+  gatemsg.style.color = '#a32d2d';
+  gatemsg.textContent = v.status === 401 ? 'Wachtwoord klopt niet.' : v.error;
+  pw.value = '';
+  pw.focus();
+  return false;
+}
+
+unlockBtn.onclick = () => {
+  const v = pw.value;
+  if (!v) { gatemsg.style.color = '#a32d2d'; gatemsg.textContent = 'Vul een wachtwoord in.'; return; }
+  attemptUnlock(v, document.getElementById('remember').checked);
 };
 
 pw.addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('unlock').click(); }
+  if (e.key === 'Enter') { e.preventDefault(); unlockBtn.click(); }
 });
 
 document.getElementById('logout').onclick = () => {
@@ -209,8 +251,28 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(false); }
 });
 
-if (!password()) openGate();
-else if (src.value.trim() && xsl.value.trim()) run(true);
+// De gate staat standaard open (zie CSS). Is er een bewaard wachtwoord, dan
+// controleren we dat eerst; de tool wordt pas zichtbaar als dat klopt.
+(async function boot() {
+  const saved = password();
+  if (!saved) { openGate(); return; }
+
+  gatemsg.style.color = 'var(--mut)';
+  gatemsg.textContent = 'Controleren...';
+  unlockBtn.disabled = true;
+
+  const v = await verify(saved);
+  unlockBtn.disabled = false;
+
+  if (v.ok) {
+    closeGate();
+    if (src.value.trim() && xsl.value.trim()) run(true);
+  } else {
+    localStorage.removeItem(PW_KEY);
+    sessionStorage.removeItem(PW_KEY);
+    openGate(v.status === 401 ? 'Wachtwoord klopt niet meer.' : v.error);
+  }
+})();
 </script>
 </body>
 </html>

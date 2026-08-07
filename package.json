@@ -1,0 +1,9 @@
+{
+  "name": "xslt-fiddle",
+  "version": "1.0.0",
+  "description": "XSLT 3.0 Fiddle running on Vercel Serverless Functions",
+  "main": "api/transform.js",
+  "dependencies": {
+    "xslt3": "^2.7.0"
+  }
+}
